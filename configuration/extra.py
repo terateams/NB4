@@ -31,6 +31,46 @@
 ## Remote authentication support
 # REMOTE_AUTH_DEFAULT_PERMISSIONS = {}
 
+## Azure AD / Microsoft Entra ID Social Auth Configuration
+## Read Social Auth settings from environment variables
+from os import environ
+
+# Azure AD OAuth2 settings for single-tenant authentication
+if environ.get('SOCIAL_AUTH_AZUREAD_OAUTH2_KEY'):
+    SOCIAL_AUTH_AZUREAD_OAUTH2_KEY = environ.get('SOCIAL_AUTH_AZUREAD_OAUTH2_KEY')
+
+if environ.get('SOCIAL_AUTH_AZUREAD_OAUTH2_SECRET'):
+    SOCIAL_AUTH_AZUREAD_OAUTH2_SECRET = environ.get('SOCIAL_AUTH_AZUREAD_OAUTH2_SECRET')
+
+# Optional: Force HTTPS redirect URI if behind a load balancer or reverse proxy
+# Uncomment the line below if Azure AD complains about http:// redirect URIs
+# SOCIAL_AUTH_REDIRECT_IS_HTTPS = True
+
+# 自定义 Social Auth Pipeline，支持通过 email 关联已存在的用户
+# 这样可以避免创建重复用户，而是关联到已有的相同 email 用户
+SOCIAL_AUTH_PIPELINE = (
+    # 获取 provider 的用户信息
+    'social_core.pipeline.social_auth.social_details',
+    # 获取 social auth 的 UID
+    'social_core.pipeline.social_auth.social_uid',
+    # 检查当前后端是否允许
+    'social_core.pipeline.social_auth.auth_allowed',
+    # 尝试通过 social auth 关联查找用户
+    'social_core.pipeline.social_auth.social_user',
+    # 尝试通过 email 查找并关联已存在的用户（关键步骤）
+    'social_core.pipeline.social_auth.associate_by_email',
+    # 获取用户名
+    'social_core.pipeline.user.get_username',
+    # 如果用户不存在则创建（只有在上面的步骤都没找到用户时才会执行）
+    'social_core.pipeline.user.create_user',
+    # 关联 social auth 到用户
+    'social_core.pipeline.social_auth.associate_user',
+    # 加载 provider 的额外数据
+    'social_core.pipeline.social_auth.load_extra_data',
+    # 更新用户详细信息（如名字、姓氏等）
+    'social_core.pipeline.user.user_details',
+)
+
 
 ## By default uploaded media is stored on the local filesystem. Using Django-storages is also supported. Provide the
 ## class path of the storage driver in STORAGE_BACKEND and any configuration options in STORAGE_CONFIG. For example:

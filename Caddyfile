@@ -1,0 +1,20 @@
+# ./Caddyfile
+
+localhost, host.docker.internal {   # This line should match the ALLOWED_HOSTS in your NetBox Docker configuration
+    tls internal
+    reverse_proxy netbox:8080
+    encode gzip zstd
+
+    log {
+        level error
+    }
+}
+
+{$CADDY_PUBLIC_HOST:netbox.example.com} {
+    reverse_proxy netbox:8080
+    encode gzip zstd
+
+    log {
+        level error
+    }
+}
