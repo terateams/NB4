@@ -23,6 +23,128 @@ if old in text and new not in text:
     path.write_text(text.replace(old, new), encoding='utf-8')
 PY
 
+# Patch upstream (equivalent to PR #130): fix `--slugs` filtering when YAML has no `slug`.
+# Keep this patch isolated (not mixed with other repo.py fixes).
+# See: https://github.com/netbox-community/Device-Type-Library-Import/pull/130
+RUN python - <<'PY'
+import re
+import textwrap
+from pathlib import Path
+
+path = Path('/app/repo.py')
+text = path.read_text(encoding='utf-8')
+
+method_pat = re.compile(
+    r"(?ms)^(?P<i>[ \t]*)def parse_files\(self, files: list, slugs: list = None\):\n.*?(?=^(?P=i)def \w+\(|\Z)"
+)
+
+replacement = textwrap.dedent('''
+def parse_files(self, files: list, slugs: list = None):
+    deviceTypes = []
+    for file in files:
+        with open(file, 'r') as stream:
+            try:
+                data = yaml.safe_load(stream)
+            except yaml.YAMLError as excep:
+                self.handle.verbose_log(excep)
+                continue
+            manufacturer = data['manufacturer']
+            data['manufacturer'] = {
+                'name': manufacturer, 'slug': self.slug_format(manufacturer)}
+
+            # Save file location to resolve any relative paths for images
+            data['src'] = file
+
+        if slugs:
+            slug_present = any(s.casefold() in data.get('slug', '').casefold() for s in slugs)
+            if not slug_present:
+                self.handle.verbose_log(f"Skipping {data['model']}")
+                continue
+
+        deviceTypes.append(data)
+    return deviceTypes
+''').lstrip('\n')
+
+def indent_block(block: str, indent: str) -> str:
+    return ''.join((indent + line if line.strip() else line) for line in block.splitlines(True))
+
+def method_repl(m: re.Match) -> str:
+    i = m.group('i')
+    return indent_block(replacement, i)
+
+new_text, n = method_pat.subn(method_repl, text)
+if n:
+    path.write_text(new_text, encoding='utf-8')
+PY
+
+# Patch upstream (equivalent to PR #173): Fix "Error creating manufacturers" when
+# only some vendors import due to slug collisions or missing slug.
+# See: https://github.com/netbox-community/Device-Type-Library-Import/pull/173
+RUN python - <<'PY'
+import re
+import textwrap
+from pathlib import Path
+
+path = Path('/app/netbox_api.py')
+text = path.read_text(encoding='utf-8')
+
+pattern = re.compile(
+    r"(?ms)^(?P<i>[ \t]*)def create_manufacturers\(self, vendors\):\n.*?(?=^(?P=i)def create_device_types\()"
+)
+
+replacement = textwrap.dedent('''
+def create_manufacturers(self, vendors):
+    # Get existing manufacturers (name + slug)
+    self.existing_manufacturers = self.get_manufacturers()
+    existing_slugs = {item.slug for item in self.existing_manufacturers.values()}
+    existing_names = {item.name for item in self.existing_manufacturers.values()}
+
+    to_create = []
+
+    for vendor in vendors:
+        # Ensure slug is set
+        vendor.setdefault('slug', vendor['name'].lower().replace(' ', '-'))
+
+        # Check existence by name or slug
+        if vendor["name"] in existing_names or vendor["slug"] in existing_slugs:
+            self.handle.verbose_log(
+                f"Manufacturer Exists: {vendor['name']} (slug: {vendor['slug']})"
+            )
+        else:
+            to_create.append(vendor)
+            self.handle.verbose_log(
+                f"Manufacturer queued for addition: {vendor['name']} (slug: {vendor['slug']})"
+            )
+
+    # Only if there are manufacturers to create → API call
+    if to_create:
+        self.handle.log(f"Creating {len(to_create)} new manufacturers...")
+        try:
+            created_manufacturers = self.netbox.dcim.manufacturers.create(to_create)
+            for manufacturer in created_manufacturers:
+                self.handle.verbose_log(
+                    f"Manufacturer Created: {manufacturer.name} - {manufacturer.id}"
+                )
+                self.counter.update({'manufacturer': 1})
+        except pynetbox.RequestError as request_error:
+            # Log error with detailed API error message
+            self.handle.log(f"Error creating manufacturers: {request_error.error}")
+    else:
+        self.handle.log("No new manufacturers to create.")
+''').lstrip('\n')
+
+def indent_block(block: str, indent: str) -> str:
+    return ''.join((indent + line if line.strip() else line) for line in block.splitlines(True))
+
+def repl(m: re.Match) -> str:
+    i = m.group('i')
+    return indent_block(replacement, i)
+
+new_text, n = pattern.subn(repl, text)
+if n:
+    path.write_text(new_text, encoding='utf-8')
+PY
+
 # Install dependencies; pin pynetbox to a version known to work with NetBox v4.
 RUN pip install --no-cache-dir -r /app/requirements.txt \
 	&& pip install --no-cache-dir --force-reinstall "pynetbox==7.3.4"
