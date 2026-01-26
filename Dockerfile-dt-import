@@ -1,0 +1,30 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Pull the latest upstream importer code at build time.
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends git ca-certificates \
+	&& rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/netbox-community/Device-Type-Library-Import.git /app
+
+# Patch upstream for Python 3.12+: avoid invalid escape sequence warnings.
+RUN python - <<'PY'
+from pathlib import Path
+
+path = Path('/app/repo.py')
+text = path.read_text(encoding='utf-8')
+
+old = "re_sub('\\W+', '-', name.lower())"
+new = "re_sub(r'\\W+', '-', name.lower())"
+
+if old in text and new not in text:
+    path.write_text(text.replace(old, new), encoding='utf-8')
+PY
+
+# Install dependencies; pin pynetbox to a version known to work with NetBox v4.
+RUN pip install --no-cache-dir -r /app/requirements.txt \
+	&& pip install --no-cache-dir --force-reinstall "pynetbox==7.3.4"
+
+ENTRYPOINT ["python", "/app/nb-dt-import.py"]
