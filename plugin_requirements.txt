@@ -1,2 +1,3 @@
 netbox_contract
+netbox-topology-views
 netboxlabs-netbox-branching

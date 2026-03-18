@@ -10,14 +10,17 @@ from netbox_branching.utilities import DynamicSchemaDict
 
 PLUGINS = [
     "netbox_contract",
+    "netbox_topology_views",
     "netbox_branching",
 ]
 
-# PLUGINS_CONFIG = {
-#   "netbox_bgp": {
-#     ADD YOUR SETTINGS HERE
-#   }
-# }
+PLUGINS_CONFIG = {
+    "netbox_branching": {
+        "exempt_models": [
+            "netbox_topology_views.individualoptions",
+        ],
+    },
+}
 
 DATABASES = DynamicSchemaDict({
     "default": {
