@@ -1,4 +1,9 @@
 *.sql.gz
+.env
+.backup.env
+backups/
+coscli_output/
+coscli.log
 .netbox
 .python-version
 docker-compose.override.yml
