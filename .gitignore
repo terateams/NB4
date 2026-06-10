@@ -16,4 +16,5 @@ configuration/ldap/*
 !configuration/ldap/ldap_config.py
 !configuration/logging.py
 !configuration/plugins.py
+!configuration/branding/
 super-linter.log
