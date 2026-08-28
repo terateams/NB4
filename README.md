@@ -159,6 +159,89 @@ git push -u origin chore/merge-upstream-<netbox-version>
 将 `chore/merge-upstream-<netbox-version>` 合并到 `production`。重新构建和重启
 服务前，务必先备份部署数据。
 
+### PostgreSQL 大版本与数据卷升级
+
+上游镜像升级可能同时升级 PostgreSQL 主版本，或修改 Compose 的数据卷名称和挂载路径。
+此类变更下，即使 `docker compose up -d` 和 NetBox 健康检查均成功，也可能是 Compose
+创建并连接到了一个新的空数据库，而不是原有数据卷。
+
+在将升级部署到生产前，必须在本地副本完成一次包含真实数据库数据的演练：
+
+1. 对比升级前后 `docker-compose.yml` 中 `postgres` 的镜像版本、卷名称和挂载路径。
+2. 使用 `docker volume ls` 与 `docker volume inspect <volume>` 确认原数据库卷仍存在，并
+  记录其名称、创建时间和挂载点。
+3. 在旧 PostgreSQL 版本中执行逻辑备份；保留旧卷，直到新版 NetBox、插件和业务数据
+  均完成核验。
+4. 在新 PostgreSQL 版本中恢复备份，再启动 NetBox 以执行核心及插件数据库迁移。
+5. 核对用户、设备、IP 地址和关键插件数据的数量，再切换生产环境。
+
+PostgreSQL 主版本之间不能直接复用数据目录。例如，不能将 PostgreSQL 17 的数据卷直接
+挂载到 PostgreSQL 18 容器。应使用逻辑导出和恢复：先用旧版本执行 `pg_dump`，再将备份
+导入新版本；详见上游 [PostgreSQL Update 指引][netbox-docker-wiki-postgresql-update]。
+升级期间不要运行 `docker compose down -v`、`docker volume rm` 或
+`docker system prune --volumes`，这些命令会删除恢复所需的数据卷。
+
+可使用以下命令只读确认一个旧卷的数据库主版本，命令不会修改卷内容：
+
+```bash
+docker run --rm \
+  -v <old-postgres-volume>:/var/lib/postgresql/data:ro \
+  alpine:3.21 cat /var/lib/postgresql/data/PG_VERSION
+```
+
+以下示例适用于旧卷为 PostgreSQL 17、新 Compose 为 PostgreSQL 18 的恢复演练。先在
+主机上准备备份目录，并将 `<old-postgres-volume>` 替换为确认后的旧卷名称。不要把旧卷
+直接启动为临时数据库：先复制它，确保原始卷始终可回退。
+
+```bash
+mkdir -p backups/postgresql-migration
+export OLD_POSTGRES_VOLUME=<old-postgres-volume>
+export OLD_POSTGRES_COPY="${OLD_POSTGRES_VOLUME}-migration-copy"
+
+# 创建一次性副本；原始卷以只读方式挂载。
+docker volume create "$OLD_POSTGRES_COPY"
+docker run --rm \
+  -v "${OLD_POSTGRES_VOLUME}":/from:ro \
+  -v "${OLD_POSTGRES_COPY}":/to \
+  alpine:3.21 sh -c 'cp -a /from/. /to/'
+
+# 在独立端口启动旧版本数据库，并等待其可用。
+docker run -d --name netbox-postgres17-migration \
+  --env-file env/postgres.env \
+  -p 127.0.0.1:5433:5432 \
+  -v "${OLD_POSTGRES_COPY}":/var/lib/postgresql/data \
+  docker.io/postgres:17-alpine
+until docker exec netbox-postgres17-migration sh -c \
+  'pg_isready -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"'; do
+  sleep 1
+done
+
+# 导出原 NetBox 数据库的可移植逻辑备份。
+docker exec netbox-postgres17-migration sh -c \
+  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
+  > backups/postgresql-migration/netbox-postgres17.dump
+
+# 导出完成后关闭临时旧数据库；保留副本和原始卷。
+docker rm -f netbox-postgres17-migration
+```
+
+导入前，停止 NetBox 和 worker，避免它们在恢复过程中访问数据库；不要删除数据库卷。仅
+启动新 Compose 的 PostgreSQL 服务，并将备份恢复进去：
+
+```bash
+docker compose stop netbox netbox-worker
+docker compose up -d postgres
+cat backups/postgresql-migration/netbox-postgres17.dump | \
+  docker compose exec -T postgres sh -c \
+  'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner'
+
+# NetBox 启动后会执行核心及插件迁移。
+docker compose up -d
+```
+
+恢复完成后，应登录并核对用户、设备、IP 地址及关键插件数据，再决定是否删除临时副本。
+在验证完成前，保留 `<old-postgres-volume>` 和 `"${OLD_POSTGRES_VOLUME}-migration-copy"`。
+
 Please read [the release notes][releases] carefully when updating to a new image version.
 Note that the version of the NetBox Docker container image must stay in sync with the version of the Git repository.
 
@@ -166,6 +249,7 @@ If you update for the first time, be sure [to follow our _How To Update NetBox D
 
 [releases]: https://github.com/netbox-community/netbox-docker/releases
 [netbox-docker-wiki-updating]: https://github.com/netbox-community/netbox-docker/wiki/Updating
+[netbox-docker-wiki-postgresql-update]: https://github.com/netbox-community/netbox-docker/wiki/Updating#postgresql-update
 
 ## Rebuilding the Image
 
