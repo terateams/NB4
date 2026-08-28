@@ -129,6 +129,36 @@ To check the version installed on your system run `docker --version` and `docker
 
 ## Updating
 
+### 内部部署分支
+
+本仓库是 NetBox Docker 的 Fork，并包含内部部署定制。
+
+- `release` 镜像同步 `netbox-community/netbox-docker:release`。仅可在此分支使用
+  GitHub 的 **Sync fork**。
+- `production` 包含内部插件和部署定制，生产环境应从此分支部署。
+- 不要使用 Fork 同步弹窗中的 **Contribute** 或 **Open pull request**；这两个操作会
+  向上游官方仓库创建 PR。
+
+要引入上游发布版本，先同步 `release`，再从 `production` 创建临时分支并合并
+`release`，最后仅在本仓库内创建 PR：
+
+```bash
+git switch production
+git pull --ff-only origin production
+git switch -c chore/merge-upstream-<netbox-version>
+git fetch origin
+git merge origin/release
+
+# 解决冲突，并在创建 PR 前验证定制镜像。
+docker compose config
+docker compose build --pull netbox netbox-worker
+
+git push -u origin chore/merge-upstream-<netbox-version>
+```
+
+将 `chore/merge-upstream-<netbox-version>` 合并到 `production`。重新构建和重启
+服务前，务必先备份部署数据。
+
 Please read [the release notes][releases] carefully when updating to a new image version.
 Note that the version of the NetBox Docker container image must stay in sync with the version of the Git repository.
 
