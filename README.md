@@ -159,6 +159,61 @@ git push -u origin chore/merge-upstream-<netbox-version>
 将 `chore/merge-upstream-<netbox-version>` 合并到 `production`。重新构建和重启
 服务前，务必先备份部署数据。
 
+### PostgreSQL 大版本与数据卷升级
+
+上游镜像升级可能同时升级 PostgreSQL 主版本，或修改 Compose 的数据卷名称和挂载路径。
+此类变更下，即使 `docker compose up -d` 和 NetBox 健康检查均成功，也可能是 Compose
+创建并连接到了一个新的空数据库，而不是原有数据卷。
+
+在将升级部署到生产前，必须在本地副本完成一次包含真实数据库数据的演练：
+
+1. 对比升级前后 `docker-compose.yml` 中 `postgres` 的镜像版本、卷名称和挂载路径。
+2. 从 `backups/` 或已验证的异地备份取得最新的逻辑转储文件（`.dump`）。
+3. 在新 PostgreSQL 版本中恢复备份，再启动 NetBox 以执行核心及插件数据库迁移。
+4. 核对用户、设备、IP 地址和关键插件数据的数量，再切换生产环境。
+
+PostgreSQL 主版本之间不能直接复用数据目录。例如，不能将 PostgreSQL 17 的数据卷直接
+挂载到 PostgreSQL 18 容器。应使用之前生成的逻辑备份恢复到新版本；详见上游
+[PostgreSQL Update 指引][netbox-docker-wiki-postgresql-update]。恢复期间不要运行
+`docker compose down -v`、`docker volume rm` 或 `docker system prune --volumes`。
+
+以下示例将 `backups/` 目录中的数据库转储恢复到当前 PostgreSQL 18 服务。先选择要恢复的
+备份，并验证它是 PostgreSQL 自定义格式的有效逻辑转储：
+
+```bash
+export BACKUP_FILE=backups/<netbox-database-backup>.dump
+test -s "$BACKUP_FILE"
+docker run --rm -i docker.io/postgres:18-alpine pg_restore --list < "$BACKUP_FILE" \
+  >/dev/null
+```
+
+校验成功后，停止 NetBox 和 worker，避免它们在恢复过程中访问数据库；不要删除数据库卷。
+仅启动新 Compose 的 PostgreSQL 服务。恢复前会删除并重建当前 `netbox` 数据库，因此必须
+确认当前数据库没有需要保留的数据。不要使用 `pg_restore --clean` 覆盖一个已执行新版插件
+迁移的数据库：备份外的插件表可能依赖核心表，导致删除顺序冲突并留下部分恢复的数据。
+
+```bash
+docker compose stop netbox netbox-worker
+docker compose up -d postgres
+
+# 终止现有连接，然后从维护数据库重建一个空的 NetBox 数据库。
+docker compose exec -T postgres sh -c \
+  'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres -c \
+  "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '\''$POSTGRES_DB'\'' AND pid <> pg_backend_pid();"'
+docker compose exec -T postgres sh -c \
+  'dropdb -U "$POSTGRES_USER" "$POSTGRES_DB" && createdb -U "$POSTGRES_USER" "$POSTGRES_DB"'
+
+cat "$BACKUP_FILE" | \
+  docker compose exec -T postgres sh -c \
+  'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --exit-on-error --no-owner'
+
+# NetBox 启动后会执行核心及插件迁移。
+docker compose up -d
+```
+
+恢复完成后，应登录并核对用户、设备、IP 地址及关键插件数据，再决定是否删除临时副本。
+在验证完成前，保留原始 `.dump` 文件及对应的媒体备份。
+
 Please read [the release notes][releases] carefully when updating to a new image version.
 Note that the version of the NetBox Docker container image must stay in sync with the version of the Git repository.
 
@@ -166,6 +221,7 @@ If you update for the first time, be sure [to follow our _How To Update NetBox D
 
 [releases]: https://github.com/netbox-community/netbox-docker/releases
 [netbox-docker-wiki-updating]: https://github.com/netbox-community/netbox-docker/wiki/Updating
+[netbox-docker-wiki-postgresql-update]: https://github.com/netbox-community/netbox-docker/wiki/Updating#postgresql-update
 
 ## Rebuilding the Image
 
