@@ -1,0 +1,3 @@
+[submodule "local-plugins/netbox-ipquality"]
+	path = local-plugins/netbox-ipquality
+	url = https://github.com/terateams/netbox-ipquality.git

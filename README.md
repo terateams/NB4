@@ -148,6 +148,7 @@ git pull --ff-only origin production
 git switch -c chore/merge-upstream-<netbox-version>
 git fetch origin
 git merge origin/release
+git submodule update --init --recursive
 
 # 解决冲突，并在创建 PR 前验证定制镜像。
 docker compose config
@@ -155,6 +156,18 @@ docker compose build --pull netbox netbox-worker
 
 git push -u origin chore/merge-upstream-<netbox-version>
 ```
+
+IPQuality 插件版本由 NB4 记录的 submodule 提交固定。要将插件引用更新到某个发布标签
+（例如 `v1.0.0`），在 NB4 仓库中执行：
+
+```bash
+git -C local-plugins/netbox-ipquality fetch --tags
+git -C local-plugins/netbox-ipquality checkout v1.0.0
+git add local-plugins/netbox-ipquality
+```
+
+提交 NB4 中更新后的 submodule 引用。检出已有 NB4 版本时，使用
+`git submodule update --init --recursive` 还原该版本记录的插件提交。
 
 将 `chore/merge-upstream-<netbox-version>` 合并到 `production`。重新构建和重启
 服务前，务必先备份部署数据。

@@ -12,9 +12,13 @@ PLUGINS = [
     "netbox_contract",
     "netbox_topology_views",
     "netbox_branching",
+    "netbox_ipquality",
 ]
 
 PLUGINS_CONFIG = {
+    "netbox_ipquality": {
+        "tag_slug": "ip-quality-enabled",
+    },
     "netbox_branching": {
         "exempt_models": [
             "netbox_topology_views.individualoptions",
